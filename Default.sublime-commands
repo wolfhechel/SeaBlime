@@ -1,0 +1,38 @@
+[
+    {
+        "caption": "Preferences: SeaBlime Settings – Default",
+        "command": "open_file", "args":
+        {
+            "file": "${packages}/SeaBlime/SeaBlime.sublime-settings"
+        }
+    },
+    {
+        "caption": "Preferences: SeaBlime Settings – User",
+        "command": "open_file", "args":
+        {
+            "file": "${packages}/User/SeaBlime.sublime-settings"
+        }
+    },
+    {
+        "caption": "SeaBlime: Enable CMake Support",
+        "command": "enable_cmake_support"
+    },
+    {
+        "caption": "CMake: Update build cache",
+        "command": "cmake_update_build_cache"
+    },
+    {
+        "caption": "CMake: Hide output",
+        "command": "hide_panel",
+        "args": {
+            "panel": "output.cmake_build"
+        }
+    },
+    {
+        "caption": "CMake: Show output",
+        "command": "show_panel",
+        "args": {
+            "panel": "output.cmake_build"
+        }
+    }
+]
