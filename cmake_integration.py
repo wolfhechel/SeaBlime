@@ -1,43 +1,19 @@
 import os.path
 import shlex
 import subprocess
-import re
-from tempfile import mkdtemp
 
 import sublime
 import sublime_plugin
 
-from .utils.settings import set_setting, get_setting
-
-def get_cmake_cache():
-    return os.path.join(
-        sublime.cache_path(),
-        'CMakeCache'
-    )
-
-def make_build_cache():
-    return mkdtemp(dir=get_cmake_cache())
-
-def which(filename):
-    paths = os.getenv('PATH', '').split(os.path.pathsep)
-
-    for path in paths:
-        cmake_path = os.path.join(path, filename)
-
-        if os.path.isfile(cmake_path):
-            yield cmake_path
-
-def find_cmake_bin():
-    try:
-        cmake_bin = next(which('cmake'))
-    except StopIteration:
-        cmake_bin = None
-
-    return cmake_bin
+from .utils.settings import Settings, WindowCommandSettingsMixin
+from .cmake import find_cmake_bin
+from .cmake.cache import CMakeCacheParser
+from .cmake.build_cache import get_cmake_cache, make_build_cache
 
 common_cmake_args = shlex.split(
     '-G "Sublime Text 2 - Unix Makefiles" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON'
 )
+
 
 def plugin_loaded():
     cmake_cache = get_cmake_cache()
@@ -45,60 +21,13 @@ def plugin_loaded():
     if not os.path.exists(cmake_cache):
         os.mkdir(cmake_cache)
 
+    window = sublime.active_window()
 
-class CMakeCacheParser(object):
-
-    cache_entry_re = re.compile('^([A-Za-z_0-9]*):([A-Z]*)=(.*)$')
-
-    @staticmethod
-    def value_to_bool(value):
-        value = value.upper()
-
-        if value in ('TRUE', 'ON'):
-            bool_value = True
-        elif value in ('FALSE', 'OFF'):
-            bool_value = False
-        else:
-            bool_value = None
-
-        return bool_value
-
-    @classmethod
-    def iterate(cls, cmake_cache):
-        with open(cmake_cache, 'r') as cache:
-
-            while True:
-                line = cache.readline()
-
-                if line == '':
-                    break
-
-                cache_entry = cls.cache_entry_re.match(line.strip())
-
-                if cache_entry:
-                    key, _type, value = cache_entry.groups()
-
-                    if _type.upper() == 'BOOL':
-                        value = cls.value_to_bool(value)
-
-                    yield key, value
-
-    @classmethod
-    def parse(cls, cmake_cache):
-        return {
-            k: v for k, v in cls.iterate(cmake_cache)
-        }
-
-    @classmethod
-    def find(cls, cmake_cache, key_to_find):
-        for (key, value) in cls.iterate(cmake_cache):
-            if key == key_to_find:
-                return value
-
-        raise KeyError('No cache entry for key %s' % key_to_find)
+    if Settings(window).exists:
+        window.run_command('cmake_update_build_cache')
 
 
-class CmakeUpdateBuildCache(sublime_plugin.WindowCommand):
+class CmakeUpdateBuildCache(WindowCommandSettingsMixin, sublime_plugin.WindowCommand):
 
     def panel_output(self, proc):
         panel = self.window.create_output_panel('cmake_build')
@@ -202,14 +131,14 @@ class CmakeUpdateBuildCache(sublime_plugin.WindowCommand):
                 if file.startswith(folder):
                     files_to_watch.append(file)
 
-        set_setting(self.window, 'dependencies', files_to_watch)
+        self.settings.dependencies = files_to_watch
 
     def run(self):
         source_path = os.path.dirname(
-            get_setting(self.window, 'CMakeLists.txt')
+            self.settings.cmake_lists
         )
 
-        build_cache_path = get_setting(self.window, 'build_cache')
+        build_cache_path = self.settings.build_cache
 
         args = [find_cmake_bin()]
 
@@ -237,10 +166,100 @@ class CmakeUpdateBuildCache(sublime_plugin.WindowCommand):
         sublime.set_timeout_async(_async, 0)
 
 
+class CmakeEnable(WindowCommandSettingsMixin, sublime_plugin.WindowCommand):
+
+    cmakelists = None
+
+    def __init__(self, window):
+        super().__init__(window)
+
+        self.cmakelists = list(self.find_cmakelists(
+            window.project_data().get('folders', [])
+        ))
+
+    def find_cmakelists(self, folders):
+        """
+        Tries to locate any CMakeLists.txt in folders
+        """
+
+        for folder in folders:
+            folder_path = folder.get('path', None)
+
+            if folder_path is not None:
+                cmakelist = os.path.join(folder_path, 'CMakeLists.txt')
+
+                if os.path.exists(cmakelist):
+                    yield cmakelist
+
+    def is_enabled(self):
+        return not Settings(self.window).exists
+
+    def is_visible(self):
+        return len(self.cmakelists) > 0
+
+    def add_build_cache_to_folders(self, build_cache):
+        project_data = self.window.project_data()
+
+        folders = project_data.get('folders')
+
+        has_build_cache_already = False
+
+        for folder in folders:
+            if folder.get('path', None) == build_cache:
+                has_build_cache_already = True
+                break
+
+        if not has_build_cache_already:
+            build_cache_folder = {
+                'path': build_cache,
+                'name': 'Build cache'
+            }
+
+            folders.append(build_cache_folder)
+
+            project_data['folders'] = folders
+
+            self.window.set_project_data(project_data)
+
+    def enable(self, cmakelist_index):
+        cmakelist = self.cmakelists[cmakelist_index]
+
+        self.settings.cmake_lists = cmakelist
+
+        build_cache = self.settings.build_cache
+
+        if build_cache is None:
+            build_cache = make_build_cache()
+
+            self.settings.build_cache = build_cache
+
+            self.add_build_cache_to_folders(build_cache)
+
+        self.window.run_command('cmake_update_build_cache')
+
+    def run(self):
+        self.window.show_quick_panel(self.cmakelists, self.enable)
+
+
+class CmakeToggleOutput(sublime_plugin.WindowCommand):
+
+    def run(self):
+        panel = self.window.get_output_panel('cmake_build')
+
+        command = 'hide_panel' if panel.window() else 'show_panel'
+
+        self.window.run_command(command, {
+            'panel': 'output.cmake_build'
+        })
+
+
 class CMakeListsWatcher(sublime_plugin.EventListener):
 
     def on_post_save_async(self, view):
-        files_to_watch = get_setting(view.window(), 'dependencies', [])
+        window = view.window()
+        settings = Settings(window)
+
+        files_to_watch = settings.dependencies
 
         if view.file_name() in files_to_watch:
-            view.window().run_command('cmake_update_build_cache')
+            window.run_command('cmake_update_build_cache')

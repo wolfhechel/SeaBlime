@@ -14,25 +14,15 @@
         }
     },
     {
-        "caption": "SeaBlime: Enable CMake Support",
-        "command": "enable_cmake_support"
+        "caption": "CMake: Enable",
+        "command": "cmake_enable"
     },
     {
         "caption": "CMake: Update build cache",
         "command": "cmake_update_build_cache"
     },
     {
-        "caption": "CMake: Hide output",
-        "command": "hide_panel",
-        "args": {
-            "panel": "output.cmake_build"
-        }
-    },
-    {
-        "caption": "CMake: Show output",
-        "command": "show_panel",
-        "args": {
-            "panel": "output.cmake_build"
-        }
+        "caption": "CMake: Toggle output",
+        "command": "cmake_toggle_output"
     }
 ]
